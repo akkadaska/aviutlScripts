@@ -1,0 +1,74 @@
+--track0:音量上限,1000,100000,7000,100
+--track1:音量下限,0,10000,1500,100
+--track2:大きさ,0.01,100,1,0.01
+--track3:オフセット,0,10,1,0.1
+--dialog:低音周波数,local audioBufferFrom=20; 高温周波数, local audioBufferTo=140; フレーム, local frameAhead=4;
+
+function sign(n)
+   if n >= 0 then
+      return 1
+   else
+      return -1
+   end
+end
+local w=obj.screen_w h=obj.screen_h
+local vent = {0, 0, 500}
+
+local correction = h / 1080
+
+if not ASParticle_akkadaska or obj.time == 0 then
+   ASParticle_akkadaska = {}
+   for i = 1, 200 do
+      local y = math.random(-80, 80)/100
+      local x = math.random(0, 80)/100
+      table.insert(ASParticle_akkadaska, {x, y , math.random(70 , 90)/100, math.random(10, 20)/100, 0})
+   end
+   for i = 1, 1000 do
+      for j = 1, #ASParticle_akkadaska do
+         local z = vent[3] - ASParticle_akkadaska[j][3] * ASParticle_akkadaska[j][5]
+         local x = vent[1] + ASParticle_akkadaska[j][1] * ASParticle_akkadaska[j][5] + 10 * math.sin(ASParticle_akkadaska[j][4] * ASParticle_akkadaska[j][5] / 10) - (math.min(z + 800, 0)/400)^2
+         local y = vent[2] + ASParticle_akkadaska[j][2] * ASParticle_akkadaska[j][5] + 5 * math.sin(ASParticle_akkadaska[j][4] * ASParticle_akkadaska[j][5] / 10) - (math.min(z + 800, 0)/400)^2 * sign(ASParticle_akkadaska[j][2])
+         obj.draw(math.abs(x) - w/4, y, z)
+         if math.abs(x*correction) > w/2 * 1.1 or math.abs(y*correction) > h/2 * 1.1 or z < -1500 then
+            ASParticle_akkadaska[j][5] = 0
+         end
+         ASParticle_akkadaska[j][5] = ASParticle_akkadaska[j][5] + 20
+      end
+   end
+end
+
+if obj.framerate < 45 then
+   frameAhead = math.floor(frameAhead/2)
+end
+local audioBuffer = {}
+audioBuffer = rikky_module.audiobuffer(frameAhead, "FOURIER", "relative", "monaural", 4096, 3, {audioBufferFrom, audioBufferTo})
+local timeShiftIndex = 0
+for i = 1, #audioBuffer do
+   timeShiftIndex = timeShiftIndex + math.max(math.min(audioBuffer[i], obj.track0) - obj.track1, 0) / 1000 * obj.track2
+end
+
+
+obj.setoption("drawtarget","tempbuffer",w/2, h)
+
+obj.load("figure", "円", 0xffffff, math.max(math.ceil(7*correction), 1))
+obj.effect("ぼかし", "範囲", 2.5, "縦横比", 0.0, "光の強さ", 30, "サイズ固定", 0)
+
+for i = 1, #ASParticle_akkadaska do
+   local z = vent[3] - ASParticle_akkadaska[i][3] * ASParticle_akkadaska[i][5]
+   local x = vent[1] + ASParticle_akkadaska[i][1] * ASParticle_akkadaska[i][5] + 30 * math.sin(ASParticle_akkadaska[i][4] * ASParticle_akkadaska[i][5] / 10)
+   local y = vent[2] + ASParticle_akkadaska[i][2] * ASParticle_akkadaska[i][5] + 15 * math.sin(ASParticle_akkadaska[i][4] * ASParticle_akkadaska[i][5] / 10)
+   if z < -600 and x < 1000 then
+      x = x - (z + 700)*1.5
+   end
+   if z < -600 and y < 1000 then
+      y = y - (z + 700)*1.5 * sign(ASParticle_akkadaska[i][2])
+   end
+   obj.draw((math.abs(x)*correction - w/4), y*correction, z)
+   if math.abs(x*correction) > w/2 * 1.1 or math.abs(y*correction) > h/2 * 1.1 or z < -1500 then
+      ASParticle_akkadaska[i][5] = 0
+   end
+   ASParticle_akkadaska[i][5] = ASParticle_akkadaska[i][5] + (1.5 + math.min(timeShiftIndex, 40))
+end
+obj.setoption("drawtarget","flamebuffer")
+obj.load("tempbuffer", 0,0,w/2,h)
+obj.effect("ミラー", "透明度", 0.0, "減衰", 0.0, "境目調整", 0, "中心の位置を変更", 1, "type", 2)

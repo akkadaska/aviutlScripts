@@ -1,0 +1,19 @@
+--track0:音量上限,1000,100000,5000,100
+--track1:音量下限,0,10000,2000,100
+--track2:大きさ,0.01,100,0.4,0.01
+--track3:オフセット,0,10,1,0.1
+--dialog:低音周波数,local audioBufferFrom=20; 高温周波数, local audioBufferTo=140;フレーム, local frameAhead=0;
+
+local w=obj.screen_w h=obj.screen_h
+local audioBuffer = {}
+if obj.framerate < 45 then
+   frameAhead = math.floor(frameAhead/2)
+end
+audioBuffer = rikky_module.audiobuffer(frameAhead, "FOURIER", "relative", "monaural", 4096, 3, {audioBufferFrom, audioBufferTo})
+local shakeIndex = 0
+for i = 1, #audioBuffer do
+   shakeIndex = shakeIndex + math.max(math.min(audioBuffer[i], obj.track0) - obj.track1, 0) / 100000
+end
+shakeIndex = math.max(shakeIndex / #audioBuffer * obj.track2 * obj.screen_h - obj.track3, 0)
+
+obj.effect("振動", "X", shakeIndex, "Y", shakeIndex, "Z", 0, "周期", 5, "ランダムに強さを変える", 0, "複雑に振動", 0)

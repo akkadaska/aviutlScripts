@@ -1,0 +1,248 @@
+--track0:低音端,10,60,20,1
+--track1:高音端,100,200,140,1
+--track2:ピーク高さ,0.5,2,1,0.1
+--track3:ピーク幅,0.5,2,1,0.1
+--check0:単色軽量モード,1
+--dialog:色1,local C1=0xffffff;色2,local C2=0xfdf000;色3,local C3=0xff0302;色4,local C4=0xff00ff;色5,local C5=0x0148ff;色6,local C6=0x00d9ff;色7,local C7=0x0ab946;色8,local C8=no;色9,local C9=no;
+
+-- =================================
+--        高度な設定パラメータ
+-- =================================
+
+-- 倍率(大きいほど悪くなるが早くなる デフォルト: 1)
+local previewZoom = 1
+
+-- 音声フレームの読み込み位置(大きいほど先 デフォルト: 12)
+local frameAhead = 12
+
+-- 全体のグロー(ぼかし true/false)
+local wholeGlow = true
+
+-- ピークのグロー(ぼかし true/false)
+local peakGlow = true
+
+-- プレビュー中のモード
+if rikky_module.getinfo("state") == "playing" then
+   previewZoom = 4  -- デフォルト: 4
+   wholeGlow = false
+   peakGlow = false
+end
+
+
+-- =================================
+--          メインプログラム
+-- =================================
+
+local w=obj.screen_w h=obj.screen_h
+local radius = math.ceil(h/3.857)
+radius = radius / previewZoom
+local colors = {C1, C2, C3, C4, C5, C6, C7, C8, C9}
+for i = 1, 9 do
+   if colors[10 - i] == "no" then
+      table.remove(colors, 10-i)
+   end
+end
+function Rotate(x, y, arg, XorY)
+   if XorY == 'x' then
+      return(x * math.cos(arg) - y * math.sin(arg))
+   end
+   if XorY == 'y' then
+      return(x * math.sin(arg) + y * math.cos(arg))
+   end
+end
+
+function N(m,s,t)
+   return (math.exp(- (t - m)^2 / s^2 / 2))
+end
+
+
+
+
+
+-- ###################################################################
+-- audioBuffer = {{色1の音声波形}, {色2の音声波形}, {色3の音声波形}, ...}
+-- の2次元配列を取得します。
+-- ###################################################################
+local audioBuffer = {}
+for i = 1, #colors do
+   audioBuffer[i] = {}
+end
+local fps = obj.framerate
+
+-- 30fpsのときの処理
+if fps < 45 then
+   frameAhead = math.floor(frameAhead/2)
+end
+for i = 1, #colors do
+   audioBuffer[i] = rikky_module.audiobuffer(frameAhead - i, "FOURIER", "relative", "monaural", 4096, 3, {obj.track0, obj.track1})
+end
+if fps < 45 then
+   for i = 1, #colors do
+      if (#colors - i + 1)%2 == 0 then
+         for j = 1, #audioBuffer[1] do
+            audioBuffer[#colors - i + 1][j] = (audioBuffer[(#colors - i + 1)/2][j] + audioBuffer[(#colors - i + 1)/2+1][j]) / 2
+         end
+      else
+         for j = 1, #audioBuffer[1] do
+            audioBuffer[#colors - i + 1][j] = audioBuffer[(#colors - i + 2)/2][j]
+         end
+      end
+   end
+end
+for i = 1, #audioBuffer do
+   for j = 1, #audioBuffer[i] do
+      audioBuffer[i][j] = (audioBuffer[i][j] / 70000) * obj.track2
+   end
+end
+
+
+
+
+
+-- ###################################################################
+-- 5つの連続したオーディオバッファにフィットするガウシアンの平均、分散、高さを
+-- 最尤推定により求め、配列gaussian{i}に{平均, 分散x5, 高さ}をappendします。
+-- つまりgaussianは3次元配列で、gaussian[i]は色iのデータで
+-- gaussian[i] = {{平均, 分散x5, 高さ}, {平均, 分散x5, 高さ}, ...}となっています。
+-- ###################################################################
+local peakWidthMax = 0 peakHeightMax = 0
+local gaussian = {}
+for i = 1, #audioBuffer do
+   gaussian[i] = {} -- {平均, 分散x5, 高さ}
+   for j = 3, #audioBuffer[1] - 2 do
+      local totalHeight = audioBuffer[i][j - 2] + audioBuffer[i][j - 1] + audioBuffer[i][j] + audioBuffer[i][j + 1] + audioBuffer[i][j + 2]
+      if totalHeight > 0 then
+         local mean = (audioBuffer[i][j - 2] * (j - 2) + audioBuffer[i][j - 1] * (j - 1) + audioBuffer[i][j] * (j) + audioBuffer[i][j + 1] * (j + 1) + audioBuffer[i][j + 2] * (j + 2)) / totalHeight
+         local std = math.sqrt((audioBuffer[i][j - 2] * ((j - 2) - mean)^2 + audioBuffer[i][j - 1] * ((j - 1) - mean)^2 + audioBuffer[i][j] * ((j) - mean)^2 + audioBuffer[i][j + 1] * ((j + 1) - mean)^2 + audioBuffer[i][j + 2] * ((j + 2) - mean)^2) / totalHeight)
+         local peakHeightCorrection = math.max(1 - math.max(
+            (math.max(audioBuffer[i][j-1]-audioBuffer[i][j], 0)+math.max(audioBuffer[i][j+1]-audioBuffer[i][j], 0)) * 5 / totalHeight / 2 * 3
+            , 0), 0) * math.min(math.max(1-(math.abs(j-mean)-0.5)*3, 0), 1)
+         local peakWidthCorrection = 1
+         if audioBuffer[i][j-2] > audioBuffer[i][j-1] and audioBuffer[i][j+2] > audioBuffer[i][j+1] then
+            peakWidthCorrection = math.max(math.min(
+               1 - (audioBuffer[i][j-2] - audioBuffer[i][j-1] + audioBuffer[i][j+2] - audioBuffer[i][j+1]) / totalHeight * 5
+               , 1), 0.4)
+         end
+         local peakHeight = (
+            (N(mean, std, j-2)*audioBuffer[i][j - 2] + N(mean, std, j-1)*audioBuffer[i][j - 1] + N(mean, std, j)*audioBuffer[i][j] + N(mean, std, j+1)*audioBuffer[i][j + 1] + N(mean, std, j+2)*audioBuffer[i][j + 2]) / (N(mean, std, j-2)^2 + N(mean, std, j-1)^2 + N(mean, std, j)^2 + N(mean, std, j+1)^2 + N(mean, std, j+2)^2) - 0.01
+         ) * radius * 2 * peakHeightCorrection
+         local peakWidth = math.min(math.max((5 * std * (1 + 0.125 * (i - 1))) / #audioBuffer[1] * math.pi * radius * obj.track3 * peakWidthCorrection, 10), 1.5*radius)
+         if peakHeight > 0 then
+            table.insert(gaussian[i], {
+               mean, peakWidth, peakHeight
+            })
+            peakWidthMax = math.max(peakWidth*1.1, peakWidthMax)
+            peakHeightMax = math.max(peakHeight*1.1, peakHeightMax)
+         end
+      end
+   end
+end
+
+
+
+
+
+-- ###################################################################
+-- これよりgaussianに従ってピークをレンダリングします。
+-- まず、tempbufferの右上半分にpeakWidthMax x peakHeightMaxのガウシアン
+-- をレンダリングします。
+-- ###################################################################
+peakWidthMax = math.ceil(math.min(math.max(peakWidthMax, radius*0.5), 2*radius)/2 + 2) * 2
+peakHeightMax = math.ceil(math.min(math.max(peakHeightMax, radius*0.5), 2*radius)/2 + 2) *2
+local tempbufferSize = 2 * math.ceil(math.max(radius * 1.4 + peakHeightMax, peakWidthMax))
+obj.setoption("drawtarget","tempbuffer",tempbufferSize, tempbufferSize)
+obj.load("figure", "四角形",0xffffff,1)
+for x = -peakWidthMax/2, -1 do
+   local y = peakHeightMax * (math.exp(- x^2 / (peakWidthMax/5)^2 / 2) - math.exp(- (peakWidthMax/2)^2 / (peakWidthMax/5)^2 / 2)) / (1 - math.exp(- (peakWidthMax/2)^2 / (peakWidthMax/5)^2 / 2))
+   obj.drawpoly(x+peakWidthMax/2,-y,0, x+peakWidthMax/2+1,-y,0, x+peakWidthMax/2+1,0,0, x+peakWidthMax/2,0,0)
+end
+obj.load("tempbuffer", tempbufferSize/2,tempbufferSize/2-peakHeightMax,peakWidthMax/2,peakHeightMax)
+obj.drawpoly(peakWidthMax,-peakHeightMax,0, peakWidthMax/2,-peakHeightMax,0, peakWidthMax/2,0,0, peakWidthMax,0,0)
+
+-- 単色軽量モード
+if obj.check0 then
+   gaussian = {gaussian[1]}
+end
+
+
+
+-- ###################################################################
+-- 先程レンダリングしたガウシアンをロードして、疑似極座標変換をしたものを
+-- tempbuffer右下にレンダリングし、それをロードして、tempbuffer左の
+-- 正しい位置に回転して貼り付けます。
+-- (直接ガウシアンを変形&回転して貼り付けないのはこれを同時に行うと意図しない
+-- 変形が起こるAviutlのバグ(仕様)のためです)
+-- ###################################################################
+local dx = w / #audioBuffer[1]
+for i = 1, #gaussian do
+   local colorIndex = math.min(#gaussian + 1 - i, 7)
+   obj.load("tempbuffer", tempbufferSize/2,tempbufferSize/2-peakHeightMax,peakWidthMax,peakHeightMax)
+   obj.effect("単色化", "強さ", 100.0, "輝度を保持する", 0, "color", colors[colorIndex])
+   obj.drawpoly(0,-peakHeightMax,0, peakWidthMax,-peakHeightMax,0, peakWidthMax,0,0, 0,0,0)
+   for j = 1, #gaussian[colorIndex] do
+      obj.load("tempbuffer", tempbufferSize/2,tempbufferSize/2-peakHeightMax,peakWidthMax,peakHeightMax)
+      local peakWidth = gaussian[colorIndex][j][2]
+      local peakHeight = gaussian[colorIndex][j][3] + radius - math.sqrt(math.max(radius^2 - (peakWidth/2)^2, 0)) + 1
+      local peakArg = math.pi*4/3*gaussian[colorIndex][j][1]/#audioBuffer[i] - math.pi/6
+      obj.drawpoly(
+         0,tempbufferSize/2-peakHeight,0,
+         peakWidth,tempbufferSize/2-peakHeight,0,
+         peakWidth,tempbufferSize/2,0,
+         0,tempbufferSize/2,0,
+         peakWidthMax/2 - peakWidthMax/2*radius/(radius+peakHeight),0,
+         peakWidthMax/2 + peakWidthMax/2*radius/(radius+peakHeight),0,
+         peakWidthMax,peakHeightMax,
+         0,peakHeightMax)
+      obj.load("tempbuffer", tempbufferSize/2, tempbufferSize-peakHeight, peakWidth, peakHeight)
+      local peakHeight = gaussian[colorIndex][j][3]
+      obj.drawpoly(
+         Rotate(-peakWidth/2, -radius-peakHeight, peakArg, "x")-tempbufferSize/2, Rotate(-peakWidth/2, -radius-peakHeight, peakArg, "y"), 0,
+         Rotate(peakWidth/2, -radius-peakHeight, peakArg, "x")-tempbufferSize/2, Rotate(peakWidth/2, -radius-peakHeight, peakArg, "y"), 0,
+         Rotate(peakWidth/2-1, -math.sqrt(math.max(radius^2 - (peakWidth/2)^2, 0))+1, peakArg, "x")-tempbufferSize/2, Rotate(peakWidth/2-1, -math.sqrt(math.max(radius^2 - (peakWidth/2)^2, 0))+1, peakArg, "y"), 0,
+         Rotate(-peakWidth/2+1, -math.sqrt(math.max(radius^2 - (peakWidth/2)^2, 0))+1, peakArg, "x")-tempbufferSize/2, Rotate(-peakWidth/2+1, -math.sqrt(math.max(radius^2 - (peakWidth/2)^2, 0))+1, peakArg, "y"), 0
+      )
+      local peakHeight = gaussian[colorIndex][j][3] + radius - math.sqrt(math.max(radius^2 - (peakWidth/2)^2, 0)) + 1
+      obj.setoption("blend","alpha_sub")
+      obj.load("figure", "四角形",0xffffff,1)
+      obj.drawpoly(0,tempbufferSize/2-peakHeight,0, peakWidth,tempbufferSize/2-peakHeight,0, peakWidth,tempbufferSize/2,0, 0,tempbufferSize/2,0)
+      obj.setoption("blend")
+   end
+end
+
+
+-- ###################################################################
+-- tempbuffer左をロードしtempbuffer右に貼り付けます。
+-- 以後右側をロードし、エフェクトをかけて左側にレンダリングします。
+-- ###################################################################
+obj.setoption("blend","alpha_sub")
+obj.load("figure", "四角形",0xffffff,1)
+obj.drawpoly(0,-tempbufferSize/2,0, tempbufferSize/2,-tempbufferSize/2,0, tempbufferSize/2,tempbufferSize/2,0, 0,tempbufferSize/2,0)
+obj.setoption("blend")
+
+obj.load("tempbuffer", 0,0,tempbufferSize/2,tempbufferSize)
+   obj.drawpoly(0,-tempbufferSize/2,0, tempbufferSize/2,-tempbufferSize/2,0, tempbufferSize/2,tempbufferSize/2,0, 0,tempbufferSize/2,0)
+
+if peakGlow then
+   obj.setoption("blend","alpha_sub")
+   obj.load("figure", "円", 0xffffff, radius*2)
+   obj.drawpoly(0,-radius,0, radius,-radius,0, radius,radius,0, 0,radius,0, radius,0, 2*radius,0, 2*radius,2*radius, radius,2*radius)
+   obj.setoption("blend")
+   obj.load("tempbuffer", tempbufferSize/2,0,tempbufferSize/2,tempbufferSize)
+   obj.effect("グラデーション", "強さ", 100.0, "中心X", 0, "中心Y", -radius*0.2, "角度", 0.0, "幅", radius*0.75, "blend", 0, "color", 0xff836f, "no_color", 0, "color2", 0x81d674, "no_color2", 0, "type", 0)
+   obj.effect("ぼかし", "範囲", radius * 0.4, "縦横比", 0.0, "光の強さ", 100, "サイズ固定", 1)
+   obj.drawpoly(-tempbufferSize/2-radius*0.1,-tempbufferSize/2,0, -radius*0.1,-tempbufferSize/2-radius*0.1,0, -radius*0.1,tempbufferSize/2+radius*0.1,0, -tempbufferSize/2-radius*0.1,tempbufferSize/2,0)
+end
+obj.load("figure", "円", colors[1], radius*2)
+obj.drawpoly(0,-radius,0, radius,-radius,0, radius,radius,0, 0,radius,0, radius,0, 2*radius,0, 2*radius,2*radius, radius,2*radius)
+if wholeGlow then   
+   obj.load("tempbuffer", tempbufferSize/2,0,tempbufferSize/2,tempbufferSize)
+   obj.effect("単色化", "強さ", 100.0, "輝度を保持する", 0, "color", colors[1])
+   obj.effect("ぼかし", "範囲", radius * 0.075, "縦横比", 0.0, "光の強さ", 1, "サイズ固定", 1)
+   obj.drawpoly(-tempbufferSize/2,-tempbufferSize/2,0, 0,-tempbufferSize/2,0, 0,tempbufferSize/2,0, -tempbufferSize/2,tempbufferSize/2,0)
+end
+obj.load("tempbuffer", tempbufferSize/2,0,tempbufferSize/2,tempbufferSize)
+obj.drawpoly(-tempbufferSize/2,-tempbufferSize/2,0, 0,-tempbufferSize/2,0, 0,tempbufferSize/2,0, -tempbufferSize/2,tempbufferSize/2,0)
+
+obj.load("tempbuffer", 0,0,tempbufferSize/2,tempbufferSize)
+obj.effect("ミラー", "透明度", 0.0, "減衰", 0.0, "境目調整", 0, "中心の位置を変更", 1, "type", 2)
+obj.zoom = obj.zoom * previewZoom
