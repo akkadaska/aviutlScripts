@@ -26,7 +26,7 @@ if not ASParticle_akkadaska or obj.time == 0 then
    for i = 1, 1000 do
       for j = 1, #ASParticle_akkadaska do
          local z = vent[3] - ASParticle_akkadaska[j][3] * ASParticle_akkadaska[j][5]
-         local x = vent[1] + ASParticle_akkadaska[j][1] * ASParticle_akkadaska[j][5] + 10 * math.sin(ASParticle_akkadaska[j][4] * ASParticle_akkadaska[j][5] / 10) - (math.min(z + 800, 0)/400)^2
+         local x = vent[1] + ASParticle_akkadaska[j][1] * ASParticle_akkadaska[j][5] + 10 * math.sin(ASParticle_akkadaska[j][4] * ASParticle_akkadaska[j][5] / 10) - 1.25*(math.min(z + 800, 0)/400)^2
          local y = vent[2] + ASParticle_akkadaska[j][2] * ASParticle_akkadaska[j][5] + 5 * math.sin(ASParticle_akkadaska[j][4] * ASParticle_akkadaska[j][5] / 10) - (math.min(z + 800, 0)/400)^2 * sign(ASParticle_akkadaska[j][2])
          obj.draw(math.abs(x) - w/4, y, z)
          if math.abs(x*correction) > w/2 * 1.1 or math.abs(y*correction) > h/2 * 1.1 or z < -1500 then
